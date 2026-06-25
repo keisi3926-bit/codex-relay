@@ -1,4 +1,4 @@
-const CACHE_NAME = "codex-relay-v1";
+const CACHE_NAME = "codex-relay-v3";
 const APP_SHELL = [
   "./",
   "./index.html",

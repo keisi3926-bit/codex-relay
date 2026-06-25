@@ -17,6 +17,8 @@
 
   let state = loadState();
   let activeTemplate = null;
+  let activeScheduleId = null;
+  let activeAttachments = [];
   let toastTimer = null;
 
   const $ = (selector, parent = document) => parent.querySelector(selector);
@@ -26,6 +28,7 @@
     templateGrid: $("#templateGrid"),
     scheduleList: $("#scheduleList"),
     scheduleNotice: $("#scheduleNotice"),
+    hideCompletedSchedules: $("#hideCompletedSchedules"),
     composeTitle: $("#composeTitle"),
     snsSelect: $("#snsSelect"),
     postBody: $("#postBody"),
@@ -35,9 +38,17 @@
     characterLimit: $("#characterLimit"),
     counterCard: $("#counterCard"),
     linkError: $("#linkError"),
+    scheduleTitleInput: $("#scheduleTitleInput"),
     scheduleInput: $("#scheduleInput"),
+    repeatTypeSelect: $("#repeatTypeSelect"),
+    customRepeatField: $("#customRepeatField"),
+    customRepeatInput: $("#customRepeatInput"),
+    scheduleEditStatus: $("#scheduleEditStatus"),
+    saveScheduleButton: $("#saveScheduleButton"),
+    cancelScheduleEditButton: $("#cancelScheduleEditButton"),
     attachmentInput: $("#attachmentInput"),
     attachmentList: $("#attachmentList"),
+    attachmentMemo: $("#attachmentMemo"),
     settingsDialog: $("#settingsDialog"),
     templateDialog: $("#templateDialog"),
     toast: $("#toast")
@@ -47,16 +58,43 @@
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
       if (!saved) return clone(initialState);
-      return {
+      const merged = {
         ...clone(initialState),
         ...saved,
         links: { ...clone(defaults.links), ...(saved.links || {}) },
         templates: saved.templates?.length ? saved.templates : clone(defaults.templates),
         sns: mergeSns(saved.sns)
       };
+      merged.schedules = migrateSchedules(saved.schedules || [], merged.templates);
+      return merged;
     } catch {
       return clone(initialState);
     }
+  }
+
+  function migrateSchedules(schedules, templates) {
+    const now = new Date().toISOString();
+    return schedules.map((schedule) => ({
+      id: schedule.id || crypto.randomUUID(),
+      templateId: schedule.templateId || "",
+      title:
+        schedule.title ||
+        templates.find((template) => template.id === schedule.templateId)?.name ||
+        "投稿予定",
+      body: schedule.body || "",
+      platform: schedule.platform || schedule.snsId || "x",
+      scheduledAt: schedule.scheduledAt || schedule.at || "",
+      repeatType: ["none", "daily", "weekly", "monthly", "custom"].includes(schedule.repeatType)
+        ? schedule.repeatType
+        : "none",
+      completed: Boolean(schedule.completed),
+      createdAt: schedule.createdAt || now,
+      updatedAt: schedule.updatedAt || now,
+      customRepeatAt: schedule.customRepeatAt || "",
+      attachmentMemo: schedule.attachmentMemo || "",
+      attachments: clone(schedule.attachments || []),
+      generatedFromId: schedule.generatedFromId || ""
+    }));
   }
 
   function mergeSns(savedSns = []) {
@@ -129,22 +167,41 @@
   }
 
   function renderSchedules() {
-    const sorted = [...state.schedules].sort((a, b) => new Date(a.at) - new Date(b.at));
+    const hideCompleted = elements.hideCompletedSchedules.checked;
+    const sorted = [...state.schedules]
+      .filter((schedule) => !hideCompleted || !schedule.completed)
+      .sort((a, b) => {
+        if (a.completed !== b.completed) return Number(a.completed) - Number(b.completed);
+        return new Date(a.scheduledAt) - new Date(b.scheduledAt);
+      });
     const now = Date.now();
     elements.scheduleList.innerHTML = sorted.length
       ? sorted
           .map((schedule) => {
             const template = state.templates.find((item) => item.id === schedule.templateId);
-            const overdue = new Date(schedule.at).getTime() < now;
+            const sns = state.sns.find((item) => item.id === schedule.platform);
+            const overdue = !schedule.completed && new Date(schedule.scheduledAt).getTime() < now;
+            const repeatLabel = getRepeatLabel(schedule.repeatType);
             return `
-              <article class="schedule-item ${overdue ? "overdue" : ""}">
+              <article class="schedule-item ${overdue ? "overdue" : ""} ${schedule.completed ? "completed" : ""}">
                 <span class="schedule-dot"></span>
-                <div>
-                  <strong>${escapeHtml(template?.name || "削除済みテンプレート")}</strong>
-                  <small>${escapeHtml(formatDate(schedule.at))}${overdue ? "・時刻を過ぎています" : ""}</small>
+                <div class="schedule-copy">
+                  <div class="schedule-title-line">
+                    <strong>${escapeHtml(schedule.title || template?.name || "投稿予定")}</strong>
+                    ${schedule.completed ? '<span class="schedule-badge complete">完了</span>' : ""}
+                    <span class="schedule-badge">${escapeHtml(sns?.name || schedule.platform)}</span>
+                    ${repeatLabel ? `<span class="schedule-badge repeat">${escapeHtml(repeatLabel)}</span>` : ""}
+                  </div>
+                  <small>${escapeHtml(formatDate(schedule.scheduledAt))}${overdue ? "・時刻を過ぎています" : ""}</small>
                 </div>
-                <button class="text-button" type="button" data-open-schedule="${escapeHtml(schedule.id)}">開く</button>
-                <button class="delete-button" type="button" data-delete-schedule="${escapeHtml(schedule.id)}" aria-label="予定を削除">×</button>
+                <div class="schedule-actions">
+                  <button class="text-button" type="button" data-open-schedule="${escapeHtml(schedule.id)}">開く</button>
+                  <button class="text-button" type="button" data-duplicate-schedule="${escapeHtml(schedule.id)}">複製</button>
+                  <button class="text-button complete-button" type="button" data-complete-schedule="${escapeHtml(schedule.id)}">
+                    ${schedule.completed ? "未完了に戻す" : "完了"}
+                  </button>
+                  <button class="delete-button" type="button" data-delete-schedule="${escapeHtml(schedule.id)}" aria-label="予定を削除">削除</button>
+                </div>
               </article>
             `;
           })
@@ -158,6 +215,14 @@
       });
     });
 
+    $$("[data-duplicate-schedule]").forEach((button) => {
+      button.addEventListener("click", () => duplicateSchedule(button.dataset.duplicateSchedule));
+    });
+
+    $$("[data-complete-schedule]").forEach((button) => {
+      button.addEventListener("click", () => toggleScheduleComplete(button.dataset.completeSchedule));
+    });
+
     $$("[data-delete-schedule]").forEach((button) => {
       button.addEventListener("click", () => {
         state.schedules = state.schedules.filter((item) => item.id !== button.dataset.deleteSchedule);
@@ -168,25 +233,42 @@
     });
 
     const approaching = sorted.find((schedule) => {
-      const distance = new Date(schedule.at).getTime() - now;
+      if (schedule.completed) return false;
+      const distance = new Date(schedule.scheduledAt).getTime() - now;
       return distance >= -60 * 60 * 1000 && distance <= 24 * 60 * 60 * 1000;
     });
     elements.scheduleNotice.classList.toggle("hidden", !approaching);
     if (approaching) {
-      const template = state.templates.find((item) => item.id === approaching.templateId);
-      elements.scheduleNotice.textContent = `投稿予定が近づいています：${template?.name || "投稿"}（${formatDate(approaching.at)}）`;
+      elements.scheduleNotice.textContent = `投稿予定が近づいています：${approaching.title || "投稿"}（${formatDate(approaching.scheduledAt)}）`;
     }
+  }
+
+  function getRepeatLabel(repeatType) {
+    return {
+      daily: "毎日",
+      weekly: "毎週",
+      monthly: "毎月",
+      custom: "カスタム"
+    }[repeatType] || "";
   }
 
   function openTemplate(templateId, schedule = null) {
     activeTemplate = state.templates.find((item) => item.id === templateId);
     if (!activeTemplate) return;
+    activeScheduleId = schedule?.id || null;
     state.activeTemplateId = templateId;
     elements.composeTitle.textContent = activeTemplate.name;
     elements.postBody.value = schedule?.body ?? activeTemplate.body;
-    elements.scheduleInput.value = schedule?.at?.slice(0, 16) || "";
-    elements.snsSelect.value = schedule?.snsId || state.activeSnsId || "x";
+    elements.scheduleTitleInput.value = schedule?.title || activeTemplate.name;
+    elements.scheduleInput.value = schedule?.scheduledAt?.slice(0, 16) || "";
+    elements.repeatTypeSelect.value = schedule?.repeatType || "none";
+    elements.customRepeatInput.value = schedule?.customRepeatAt?.slice(0, 16) || "";
+    elements.attachmentMemo.value = schedule?.attachmentMemo || "";
+    elements.snsSelect.value = schedule?.platform || state.activeSnsId || "x";
     elements.attachmentInput.value = "";
+    activeAttachments = clone(schedule?.attachments || state.attachments[templateId] || []);
+    updateRepeatFields();
+    updateScheduleEditState();
     updateComposer();
     renderAttachments();
     saveState();
@@ -256,37 +338,150 @@
       showToast("投稿予定日時を入力してください");
       return;
     }
-    const existing = state.schedules.find(
-      (item) => item.templateId === activeTemplate.id && item.at === elements.scheduleInput.value
-    );
+    if (elements.repeatTypeSelect.value === "custom" && !elements.customRepeatInput.value) {
+      showToast("カスタム次回日時を入力してください");
+      return;
+    }
+    const existing = state.schedules.find((item) => item.id === activeScheduleId);
+    const now = new Date().toISOString();
     const record = {
       id: existing?.id || crypto.randomUUID(),
       templateId: activeTemplate.id,
-      snsId: elements.snsSelect.value,
-      at: elements.scheduleInput.value,
-      body: elements.postBody.value
+      title: elements.scheduleTitleInput.value.trim() || activeTemplate.name,
+      body: elements.postBody.value,
+      platform: elements.snsSelect.value,
+      scheduledAt: elements.scheduleInput.value,
+      repeatType: elements.repeatTypeSelect.value,
+      completed: existing?.completed || false,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+      customRepeatAt: elements.customRepeatInput.value,
+      attachmentMemo: elements.attachmentMemo.value,
+      attachments: clone(activeAttachments),
+      generatedFromId: existing?.generatedFromId || ""
     };
     state.schedules = existing
       ? state.schedules.map((item) => (item.id === existing.id ? record : item))
       : [...state.schedules, record];
     saveState();
     renderSchedules();
-    showToast("投稿予定を保存しました");
+    activeScheduleId = record.id;
+    updateScheduleEditState();
+    showToast(existing ? "投稿予定を更新しました" : "投稿予定を保存しました");
+  }
+
+  function duplicateSchedule(scheduleId) {
+    const schedule = state.schedules.find((item) => item.id === scheduleId);
+    if (!schedule) return;
+    const duplicate = {
+      ...clone(schedule),
+      id: crypto.randomUUID(),
+      scheduledAt: "",
+      completed: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      generatedFromId: ""
+    };
+    openTemplate(duplicate.templateId, duplicate);
+    activeScheduleId = null;
+    updateScheduleEditState();
+    elements.scheduleEditStatus.textContent = "複製・日時未設定";
+    elements.saveScheduleButton.textContent = "複製した予定を保存";
+    showToast("予定を複製しました。日時を選んで保存してください");
+  }
+
+  function toggleScheduleComplete(scheduleId) {
+    const schedule = state.schedules.find((item) => item.id === scheduleId);
+    if (!schedule) return;
+    const completing = !schedule.completed;
+    schedule.completed = completing;
+    schedule.updatedAt = new Date().toISOString();
+    if (completing) createNextOccurrence(schedule);
+    saveState();
+    renderSchedules();
+    showToast(completing ? "投稿済みとして完了しました" : "未完了に戻しました");
+  }
+
+  function createNextOccurrence(schedule) {
+    if (schedule.repeatType === "none") return;
+    if (state.schedules.some((item) => item.generatedFromId === schedule.id)) return;
+    const nextAt = calculateNextOccurrence(schedule);
+    if (!nextAt) return;
+    const duplicate = {
+      ...clone(schedule),
+      id: crypto.randomUUID(),
+      scheduledAt: nextAt,
+      completed: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      generatedFromId: schedule.id
+    };
+    if (schedule.repeatType === "custom") {
+      duplicate.repeatType = "none";
+      duplicate.customRepeatAt = "";
+    }
+    state.schedules.push(duplicate);
+  }
+
+  function calculateNextOccurrence(schedule) {
+    if (schedule.repeatType === "custom") return schedule.customRepeatAt || "";
+    const date = new Date(schedule.scheduledAt);
+    if (Number.isNaN(date.getTime())) return "";
+    if (schedule.repeatType === "daily") date.setDate(date.getDate() + 1);
+    if (schedule.repeatType === "weekly") date.setDate(date.getDate() + 7);
+    if (schedule.repeatType === "monthly") {
+      const originalDay = date.getDate();
+      date.setDate(1);
+      date.setMonth(date.getMonth() + 1);
+      const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+      date.setDate(Math.min(originalDay, lastDay));
+    }
+    return toLocalDateTimeValue(date);
+  }
+
+  function toLocalDateTimeValue(date) {
+    const offset = date.getTimezoneOffset();
+    return new Date(date.getTime() - offset * 60 * 1000).toISOString().slice(0, 16);
+  }
+
+  function resetScheduleEditor() {
+    activeScheduleId = null;
+    elements.scheduleTitleInput.value = activeTemplate?.name || "";
+    elements.scheduleInput.value = "";
+    elements.repeatTypeSelect.value = "none";
+    elements.customRepeatInput.value = "";
+    elements.attachmentMemo.value = "";
+    activeAttachments = clone(state.attachments[activeTemplate?.id] || []);
+    updateRepeatFields();
+    updateScheduleEditState();
+    renderAttachments();
+  }
+
+  function updateScheduleEditState() {
+    const editing = Boolean(activeScheduleId);
+    elements.scheduleEditStatus.textContent = editing ? "編集中" : "新規";
+    elements.saveScheduleButton.textContent = editing ? "予定を更新" : "予定を保存";
+    elements.cancelScheduleEditButton.classList.toggle("hidden", !editing);
+  }
+
+  function updateRepeatFields() {
+    elements.customRepeatField.classList.toggle("hidden", elements.repeatTypeSelect.value !== "custom");
   }
 
   function handleAttachments(files) {
     if (!activeTemplate) return;
-    state.attachments[activeTemplate.id] = [...files].map((file) => ({
+    activeAttachments = [...files].map((file) => ({
       name: file.name,
       type: file.type,
       size: file.size
     }));
+    if (!activeScheduleId) state.attachments[activeTemplate.id] = clone(activeAttachments);
     saveState();
     renderAttachments();
   }
 
   function renderAttachments() {
-    const files = state.attachments[activeTemplate?.id] || [];
+    const files = activeAttachments;
     elements.attachmentList.innerHTML = files.length
       ? files
           .map(
@@ -302,7 +497,8 @@
       : "";
     $$("[data-remove-attachment]", elements.attachmentList).forEach((button) => {
       button.addEventListener("click", () => {
-        state.attachments[activeTemplate.id].splice(Number(button.dataset.removeAttachment), 1);
+        activeAttachments.splice(Number(button.dataset.removeAttachment), 1);
+        if (!activeScheduleId) state.attachments[activeTemplate.id] = clone(activeAttachments);
         saveState();
         renderAttachments();
       });
@@ -486,11 +682,14 @@
     $("#copyButton").addEventListener("click", copyPost);
     $("#openSnsButton").addEventListener("click", openSns);
     $("#saveScheduleButton").addEventListener("click", saveSchedule);
+    $("#cancelScheduleEditButton").addEventListener("click", resetScheduleEditor);
     $("#saveTemplateButton").addEventListener("click", saveCurrentTemplate);
     $("#addLinkButton").addEventListener("click", addLinkRow);
     $("#saveSettingsButton").addEventListener("click", saveSettings);
     elements.postBody.addEventListener("input", updateComposer);
     elements.snsSelect.addEventListener("change", updateComposer);
+    elements.repeatTypeSelect.addEventListener("change", updateRepeatFields);
+    elements.hideCompletedSchedules.addEventListener("change", renderSchedules);
     elements.attachmentInput.addEventListener("change", (event) => handleAttachments(event.target.files));
 
     $$("[data-settings-tab]").forEach((tab) => {

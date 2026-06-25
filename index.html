@@ -57,6 +57,10 @@
                 <p class="eyebrow">SCHEDULE</p>
                 <h2>投稿予定</h2>
               </div>
+              <label class="schedule-filter">
+                <input id="hideCompletedSchedules" type="checkbox" />
+                <span>完了済みを非表示</span>
+              </label>
             </div>
             <div class="schedule-list" id="scheduleList"></div>
           </section>
@@ -115,13 +119,35 @@
               <section class="panel">
                 <div class="panel-heading">
                   <h2>投稿予定</h2>
+                  <span class="muted" id="scheduleEditStatus">新規</span>
                 </div>
+                <label class="field">
+                  <span>予定タイトル</span>
+                  <input id="scheduleTitleInput" type="text" maxlength="80" placeholder="作品名・投稿内容など" />
+                </label>
                 <label class="field">
                   <span>日時</span>
                   <input id="scheduleInput" type="datetime-local" />
                 </label>
+                <label class="field">
+                  <span>繰り返し</span>
+                  <select id="repeatTypeSelect">
+                    <option value="none">なし</option>
+                    <option value="daily">毎日</option>
+                    <option value="weekly">毎週</option>
+                    <option value="monthly">毎月</option>
+                    <option value="custom">カスタム日付</option>
+                  </select>
+                </label>
+                <label class="field hidden" id="customRepeatField">
+                  <span>カスタム次回日時</span>
+                  <input id="customRepeatInput" type="datetime-local" />
+                </label>
                 <button class="secondary-button full" id="saveScheduleButton" type="button">
                   予定を保存
+                </button>
+                <button class="text-button full hidden" id="cancelScheduleEditButton" type="button">
+                  編集を終了して新規予定に戻す
                 </button>
               </section>
 
@@ -137,6 +163,14 @@
                   <small>選択状況を投稿単位で記録</small>
                 </label>
                 <ul class="attachment-list" id="attachmentList"></ul>
+                <label class="field attachment-memo-field">
+                  <span>添付メモ</span>
+                  <textarea
+                    id="attachmentMemo"
+                    rows="3"
+                    placeholder="使用する画像、動画、サムネイルなど"
+                  ></textarea>
+                </label>
               </section>
 
               <section class="panel">

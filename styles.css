@@ -284,9 +284,26 @@ p {
   gap: 10px;
 }
 
+.schedule-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.schedule-filter input {
+  width: 17px;
+  min-height: auto;
+  height: 17px;
+  margin: 0;
+}
+
 .schedule-item {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
   align-items: center;
   padding: 16px 18px;
@@ -305,6 +322,61 @@ p {
   color: var(--muted);
 }
 
+.schedule-copy {
+  min-width: 0;
+}
+
+.schedule-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-badge {
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #475569;
+  background: #e2e8f0;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.schedule-badge.repeat {
+  color: #7c3aed;
+  background: #f3e8ff;
+}
+
+.schedule-badge.complete {
+  color: #15803d;
+  background: #dcfce7;
+}
+
+.schedule-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.schedule-actions button {
+  padding: 7px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.schedule-actions button:hover {
+  background: #f1f5f9;
+}
+
+.schedule-actions .complete-button {
+  color: #15803d;
+}
+
+.schedule-actions .delete-button {
+  color: var(--danger);
+  font-weight: 800;
+}
+
 .schedule-dot {
   width: 9px;
   height: 9px;
@@ -314,6 +386,19 @@ p {
 
 .schedule-item.overdue .schedule-dot {
   background: var(--danger);
+}
+
+.schedule-item.completed {
+  opacity: 0.68;
+  background: rgba(241, 245, 249, 0.82);
+}
+
+.schedule-item.completed .schedule-copy strong {
+  text-decoration: line-through;
+}
+
+.schedule-item.completed .schedule-dot {
+  background: #94a3b8;
 }
 
 .empty-state {
@@ -550,6 +635,10 @@ textarea {
 
 .full {
   width: 100%;
+  margin-top: 14px;
+}
+
+.attachment-memo-field {
   margin-top: 14px;
 }
 
@@ -848,18 +937,13 @@ dialog::backdrop {
   }
 
   .schedule-item {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr;
   }
 
-  .schedule-item .text-button {
+  .schedule-actions {
     grid-column: 2;
-    justify-self: start;
-    padding: 0;
-  }
-
-  .schedule-item .delete-button {
-    grid-column: 3;
-    grid-row: 1 / span 2;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .dialog-card {
