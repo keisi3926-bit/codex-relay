@@ -267,12 +267,36 @@ p {
 }
 
 .notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin: 0 0 28px;
   padding: 14px 18px;
   border: 1px solid #facc15;
   border-radius: 14px;
   background: #fefce8;
   font-weight: 700;
+}
+
+.notice-copy {
+  min-width: 0;
+}
+
+.notice-actions,
+.utility-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.notice-actions {
+  justify-content: flex-end;
+}
+
+.utility-strip {
+  margin: -14px 0 28px;
 }
 
 .hidden {
@@ -902,6 +926,16 @@ dialog::backdrop {
 
   .section-heading {
     align-items: end;
+  }
+
+  .notice {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .notice-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .compose-header {

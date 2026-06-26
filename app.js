@@ -11,6 +11,7 @@
     sns: clone(defaults.sns),
     schedules: [],
     attachments: {},
+    notificationLog: {},
     activeTemplateId: null,
     activeSnsId: "x"
   };
@@ -20,6 +21,7 @@
   let activeScheduleId = null;
   let activeAttachments = [];
   let toastTimer = null;
+  let pendingServiceWorker = null;
 
   const $ = (selector, parent = document) => parent.querySelector(selector);
   const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
@@ -28,6 +30,8 @@
     templateGrid: $("#templateGrid"),
     scheduleList: $("#scheduleList"),
     scheduleNotice: $("#scheduleNotice"),
+    enableNotificationsButton: $("#enableNotificationsButton"),
+    reloadUpdateButton: $("#reloadUpdateButton"),
     hideCompletedSchedules: $("#hideCompletedSchedules"),
     composeTitle: $("#composeTitle"),
     snsSelect: $("#snsSelect"),
@@ -66,6 +70,7 @@
         sns: mergeSns(saved.sns)
       };
       merged.schedules = migrateSchedules(saved.schedules || [], merged.templates);
+      merged.notificationLog = saved.notificationLog || {};
       return merged;
     } catch {
       return clone(initialState);
@@ -237,10 +242,29 @@
       const distance = new Date(schedule.scheduledAt).getTime() - now;
       return distance >= -60 * 60 * 1000 && distance <= 24 * 60 * 60 * 1000;
     });
-    elements.scheduleNotice.classList.toggle("hidden", !approaching);
-    if (approaching) {
-      elements.scheduleNotice.textContent = `投稿予定が近づいています：${approaching.title || "投稿"}（${formatDate(approaching.scheduledAt)}）`;
-    }
+    renderScheduleNotice(approaching);
+  }
+
+  function renderScheduleNotice(schedule) {
+    elements.scheduleNotice.classList.toggle("hidden", !schedule);
+    elements.scheduleNotice.innerHTML = "";
+    if (!schedule) return;
+    elements.scheduleNotice.innerHTML = `
+      <div class="notice-copy">
+        <span>投稿予定が近づいています：${escapeHtml(schedule.title || "投稿")}（${escapeHtml(formatDate(schedule.scheduledAt))}）</span>
+      </div>
+      <div class="notice-actions">
+        <button class="text-button" type="button" data-notice-open="${escapeHtml(schedule.id)}">開く</button>
+        <button class="primary-button compact" type="button" data-notice-complete="${escapeHtml(schedule.id)}">投稿済みにする</button>
+      </div>
+    `;
+    $("[data-notice-open]", elements.scheduleNotice)?.addEventListener("click", () => {
+      const current = state.schedules.find((item) => item.id === schedule.id);
+      if (current) openTemplate(current.templateId, current);
+    });
+    $("[data-notice-complete]", elements.scheduleNotice)?.addEventListener("click", () => {
+      completeSchedule(schedule.id);
+    });
   }
 
   function getRepeatLabel(repeatType) {
@@ -394,12 +418,26 @@
     const schedule = state.schedules.find((item) => item.id === scheduleId);
     if (!schedule) return;
     const completing = !schedule.completed;
+    if (completing) {
+      completeSchedule(scheduleId);
+      return;
+    }
     schedule.completed = completing;
     schedule.updatedAt = new Date().toISOString();
-    if (completing) createNextOccurrence(schedule);
     saveState();
     renderSchedules();
-    showToast(completing ? "投稿済みとして完了しました" : "未完了に戻しました");
+    showToast("未完了に戻しました");
+  }
+
+  function completeSchedule(scheduleId) {
+    const schedule = state.schedules.find((item) => item.id === scheduleId);
+    if (!schedule) return;
+    schedule.completed = true;
+    schedule.updatedAt = new Date().toISOString();
+    createNextOccurrence(schedule);
+    saveState();
+    renderSchedules();
+    showToast("投稿済みとして完了しました");
   }
 
   function createNextOccurrence(schedule) {
@@ -665,6 +703,113 @@
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   }
 
+  function updateNotificationButton() {
+    if (!elements.enableNotificationsButton) return;
+    const supported = "Notification" in window;
+    const needsPermission = supported && Notification.permission === "default";
+    elements.enableNotificationsButton.classList.toggle("hidden", !needsPermission);
+  }
+
+  async function enableNotifications() {
+    if (!("Notification" in window)) {
+      showToast("このブラウザではOS通知を使えません。画面内通知で知らせます");
+      return;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      updateNotificationButton();
+      if (permission === "granted") {
+        sendSystemNotification("Codex Relay", "通知を有効にしました");
+        showToast("通知を有効にしました");
+      } else {
+        showToast("通知が許可されていません。画面内通知で知らせます");
+      }
+    } catch {
+      showToast("この起動方法ではOS通知を使えません。画面内通知で知らせます");
+    }
+  }
+
+  function startScheduleWatcher() {
+    checkScheduleNotifications();
+    setInterval(checkScheduleNotifications, 30 * 1000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        renderSchedules();
+        checkScheduleNotifications();
+      }
+    });
+  }
+
+  function checkScheduleNotifications() {
+    const now = Date.now();
+    state.schedules.forEach((schedule) => {
+      if (schedule.completed || !schedule.scheduledAt) return;
+      const scheduledAt = new Date(schedule.scheduledAt).getTime();
+      if (Number.isNaN(scheduledAt)) return;
+      const distance = scheduledAt - now;
+      const alertKey = distance <= 0 ? "due" : distance <= 10 * 60 * 1000 ? "10m" : distance <= 30 * 60 * 1000 ? "30m" : "";
+      if (!alertKey || distance < -5 * 60 * 1000) return;
+      const logKey = `${schedule.id}:${alertKey}`;
+      if (state.notificationLog[logKey]) return;
+      state.notificationLog[logKey] = new Date().toISOString();
+      saveState();
+      const label = alertKey === "due" ? "投稿時間です" : alertKey === "10m" ? "10分前です" : "30分前です";
+      notifySchedule(schedule, label);
+    });
+  }
+
+  function notifySchedule(schedule, label) {
+    const title = schedule.title || "投稿予定";
+    showToast(`${label}：${title}`);
+    renderSchedules();
+    sendSystemNotification("Codex Relay", `${label}：${title}`);
+  }
+
+  function sendSystemNotification(title, body) {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    try {
+      navigator.serviceWorker?.ready
+        .then((registration) => {
+          registration.showNotification(title, {
+            body,
+            tag: `codex-relay-${body}`,
+            icon: "./icons/icon.svg",
+            badge: "./icons/icon.svg"
+          });
+        })
+        .catch(() => new Notification(title, { body, icon: "./icons/icon.svg" }));
+    } catch {
+      new Notification(title, { body, icon: "./icons/icon.svg" });
+    }
+  }
+
+  function showUpdateButton(worker) {
+    pendingServiceWorker = worker;
+    elements.reloadUpdateButton?.classList.remove("hidden");
+  }
+
+  function setupServiceWorkerUpdates(registration) {
+    if (registration.waiting) showUpdateButton(registration.waiting);
+    registration.addEventListener("updatefound", () => {
+      const worker = registration.installing;
+      if (!worker) return;
+      worker.addEventListener("statechange", () => {
+        if (worker.state === "installed" && navigator.serviceWorker.controller) {
+          showUpdateButton(worker);
+        }
+      });
+    });
+    setInterval(() => registration.update(), 10 * 60 * 1000);
+  }
+
+  function reloadUpdate() {
+    if (pendingServiceWorker) {
+      pendingServiceWorker.postMessage({ type: "SKIP_WAITING" });
+      return;
+    }
+    window.location.reload();
+  }
+
   function showToast(message) {
     clearTimeout(toastTimer);
     elements.toast.textContent = message;
@@ -686,6 +831,8 @@
     $("#saveTemplateButton").addEventListener("click", saveCurrentTemplate);
     $("#addLinkButton").addEventListener("click", addLinkRow);
     $("#saveSettingsButton").addEventListener("click", saveSettings);
+    elements.enableNotificationsButton?.addEventListener("click", enableNotifications);
+    elements.reloadUpdateButton?.addEventListener("click", reloadUpdate);
     elements.postBody.addEventListener("input", updateComposer);
     elements.snsSelect.addEventListener("change", updateComposer);
     elements.repeatTypeSelect.addEventListener("change", updateRepeatFields);
@@ -706,8 +853,13 @@
     renderSnsOptions();
     renderHome();
     bindEvents();
+    updateNotificationButton();
+    startScheduleWatcher();
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js"));
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").then(setupServiceWorkerUpdates).catch(() => {});
+      });
+      navigator.serviceWorker.addEventListener("controllerchange", () => window.location.reload());
     }
   }
 

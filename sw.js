@@ -1,4 +1,4 @@
-const CACHE_NAME = "codex-relay-v3";
+const CACHE_NAME = "codex-relay-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -36,4 +36,10 @@ self.addEventListener("fetch", (event) => {
         })
     )
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
